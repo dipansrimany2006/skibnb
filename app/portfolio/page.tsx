@@ -45,6 +45,13 @@ interface LiveData {
   logo: string;
 }
 
+interface AgentWallet {
+  address: string;
+  balanceEth: number;
+  ethPriceUsd: number;
+  explorerUrl: string;
+}
+
 type Tab = "chart" | "allocation" | "statistics";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -131,12 +138,25 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: { value
 
 export default function PortfolioPage() {
   const router = useRouter();
-  const [portfolio,  setPortfolio]  = useState<Portfolio | null>(null);
-  const [liveData,   setLiveData]   = useState<Map<string, LiveData>>(new Map());
-  const [loading,    setLoading]    = useState(true);
-  const [authed,     setAuthed]     = useState(true);
-  const [tab,        setTab]        = useState<Tab>("allocation");
-  const [actionMenu, setActionMenu] = useState<string | null>(null);
+  const [portfolio,    setPortfolio]    = useState<Portfolio | null>(null);
+  const [liveData,     setLiveData]     = useState<Map<string, LiveData>>(new Map());
+  const [loading,      setLoading]      = useState(true);
+  const [authed,       setAuthed]       = useState(true);
+  const [tab,          setTab]          = useState<Tab>("allocation");
+  const [actionMenu,   setActionMenu]   = useState<string | null>(null);
+
+  // Agent wallet (Sepolia)
+  const [agentWallet,   setAgentWallet]   = useState<AgentWallet | null>(null);
+  const [walletLoading, setWalletLoading] = useState(false);
+
+  // Deposit modal
+  const [depositOpen,   setDepositOpen]   = useState(false);
+  type DepositStep = "form" | "creating" | "pending" | "confirming" | "success" | "error";
+  const [depositStep,   setDepositStep]   = useState<DepositStep>("form");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositTxHash, setDepositTxHash] = useState("");
+  const [depositError,  setDepositError]  = useState("");
+  const [depositedEth,  setDepositedEth]  = useState(0);
 
   useEffect(() => {
     fetch("/api/paper/portfolio")
@@ -166,10 +186,149 @@ export default function PortfolioPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
 
+    // Load agent wallet
+    loadAgentWallet();
+
     const handler = () => setActionMenu(null);
     document.addEventListener("click", handler);
     return () => document.removeEventListener("click", handler);
   }, []);
+
+  async function loadAgentWallet() {
+    setWalletLoading(true);
+    try {
+      const res = await fetch("/api/cfo/wallet");
+      if (!res.ok) return;
+      const data = await res.json() as { wallet?: { address: string; explorerUrl?: string } | null };
+      if (!data.wallet?.address) return;
+
+      const address = data.wallet.address;
+
+      // Fetch Sepolia ETH balance
+      const [balRes, ethRes] = await Promise.all([
+        fetch(`/api/portfolio/eth-balance?address=${address}`).then(r => r.ok ? r.json() : null),
+        fetch("/api/asset/ETH-USD").then(r => r.ok ? r.json() : null),
+      ]);
+
+      const balanceEth  = (balRes as { balanceEth?: number } | null)?.balanceEth ?? 0;
+      const ethPriceUsd = (ethRes as { asset?: { priceUsd: number } } | null)?.asset?.priceUsd ?? 0;
+
+      setAgentWallet({
+        address,
+        balanceEth,
+        ethPriceUsd,
+        explorerUrl: `https://sepolia.etherscan.io/address/${address}`,
+      });
+    } catch {
+      // wallet not available
+    } finally {
+      setWalletLoading(false);
+    }
+  }
+
+  async function ensureWallet(): Promise<string | null> {
+    if (agentWallet?.address) return agentWallet.address;
+    const res  = await fetch("/api/cfo/wallet", { method: "POST" });
+    const data = await res.json() as { address?: string };
+    if (data.address) { await loadAgentWallet(); return data.address; }
+    return null;
+  }
+
+  async function handleDeposit() {
+    const eth = parseFloat(depositAmount);
+    if (!eth || eth <= 0) { setDepositError("Enter a valid amount."); return; }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const provider = (window as any).ethereum;
+    if (!provider) { setDepositError("MetaMask not found. Install it to deposit."); return; }
+
+    setDepositError("");
+    let toAddress = agentWallet?.address ?? null;
+
+    if (!toAddress) {
+      setDepositStep("creating");
+      toAddress = await ensureWallet();
+      if (!toAddress) { setDepositError("Could not create wallet."); setDepositStep("error"); return; }
+    }
+
+    try {
+      // Request accounts
+      const accounts: string[] = await provider.request({ method: "eth_requestAccounts" });
+      if (!accounts.length) throw new Error("No accounts connected.");
+
+      // Switch to Sepolia (chainId 11155111 = 0xaa36a7)
+      const chainId: string = await provider.request({ method: "eth_chainId" });
+      if (chainId !== "0xaa36a7") {
+        try {
+          await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xaa36a7" }] });
+        } catch {
+          // Add network if not found
+          await provider.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: "0xaa36a7",
+              chainName: "Sepolia",
+              nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://rpc.sepolia.org"],
+              blockExplorerUrls: ["https://sepolia.etherscan.io"],
+            }],
+          });
+        }
+      }
+
+      setDepositStep("pending");
+
+      // Build value in hex wei
+      const weiHex = "0x" + Math.floor(eth * 1e18).toString(16);
+      const txHash: string = await provider.request({
+        method: "eth_sendTransaction",
+        params: [{ from: accounts[0], to: toAddress, value: weiHex }],
+      });
+
+      setDepositTxHash(txHash);
+      setDepositStep("confirming");
+
+      // Poll for receipt (Sepolia public RPC)
+      const RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const res = await fetch(RPC, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [txHash] }),
+        });
+        const data = await res.json() as { result?: { status: string } | null };
+        if (data.result) {
+          if (data.result.status === "0x1") {
+            setDepositedEth(eth);
+            setDepositStep("success");
+            // Refresh wallet balance after success
+            setTimeout(() => loadAgentWallet(), 2000);
+          } else {
+            throw new Error("Transaction failed on-chain.");
+          }
+          return;
+        }
+      }
+      throw new Error("Transaction timed out.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Transaction failed.";
+      if (msg.includes("User rejected") || msg.includes("user rejected")) {
+        setDepositStep("form");
+      } else {
+        setDepositError(msg);
+        setDepositStep("error");
+      }
+    }
+  }
+
+  function openDeposit() {
+    setDepositStep("form");
+    setDepositAmount("");
+    setDepositTxHash("");
+    setDepositError("");
+    setDepositOpen(true);
+  }
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -180,7 +339,8 @@ export default function PortfolioPage() {
     positions.reduce((s, p) => s + p.quantity * (liveData.get(p.display_symbol)?.price ?? p.avg_buy_price), 0),
   [positions, liveData]);
 
-  const totalValue  = (portfolio?.balance ?? 0) + openValue;
+  const ethValueUsd = (agentWallet?.balanceEth ?? 0) * (agentWallet?.ethPriceUsd ?? 0);
+  const totalValue  = (portfolio?.balance ?? 0) + openValue + ethValueUsd;
   const totalReturn = totalValue - 10_000;
   const returnPct   = (totalReturn / 10_000) * 100;
 
@@ -286,6 +446,15 @@ export default function PortfolioPage() {
               </svg>
               CFO Settings
             </Link>
+            <button
+              onClick={openDeposit}
+              className="flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2.5 text-sm font-semibold transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 4v16m8-8H4" />
+              </svg>
+              Deposit
+            </button>
             <Link
               href="/cfo"
               className="flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2.5 text-sm font-semibold transition-colors"
@@ -581,6 +750,218 @@ export default function PortfolioPage() {
         )}
 
       </main>
+
+      {/* ── Deposit modal ──────────────────────────────────────────────────── */}
+      {depositOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
+          onClick={e => { if (e.target === e.currentTarget && depositStep !== "pending" && depositStep !== "confirming") setDepositOpen(false); }}
+        >
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0d0d0d] shadow-2xl overflow-hidden"
+            style={{ animation: "modalIn 0.2s cubic-bezier(0.34,1.56,0.64,1)" }}>
+
+            {/* ── Success screen ── */}
+            {depositStep === "success" && (
+              <div className="flex flex-col items-center text-center px-8 py-12 gap-6">
+                {/* Animated success ring */}
+                <div className="relative flex items-center justify-center w-28 h-28">
+                  <div className="absolute inset-0 rounded-full bg-emerald-500/10 animate-ping" style={{ animationDuration: "1.5s", animationIterationCount: 1 }} />
+                  <div className="absolute inset-2 rounded-full bg-emerald-500/15" />
+                  <div className="relative w-20 h-20 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/40"
+                    style={{ animation: "successPop 0.4s cubic-bezier(0.34,1.56,0.64,1)" }}>
+                    <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"
+                        style={{ strokeDasharray: 30, strokeDashoffset: 0, animation: "drawCheck 0.4s 0.3s ease forwards" }} />
+                    </svg>
+                  </div>
+                </div>
+
+                <div style={{ animation: "fadeUp 0.4s 0.3s ease both" }}>
+                  <h3 className="text-2xl font-bold mb-2">Deposit confirmed!</h3>
+                  <p className="text-white/50 text-sm">
+                    <span className="text-white font-semibold">{depositedEth} ETH</span> has been sent to your agent wallet on Sepolia. Your portfolio balance will update shortly.
+                  </p>
+                </div>
+
+                {depositTxHash && (
+                  <a
+                    href={`https://sepolia.etherscan.io/tx/${depositTxHash}`}
+                    target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-emerald-400 hover:text-emerald-300 underline"
+                    style={{ animation: "fadeUp 0.4s 0.5s ease both", opacity: 0 }}
+                  >
+                    View on Sepolia Etherscan ↗
+                  </a>
+                )}
+
+                <button
+                  onClick={() => setDepositOpen(false)}
+                  className="w-full rounded-2xl bg-white text-black py-3.5 text-sm font-semibold hover:bg-white/90 transition-all mt-2"
+                  style={{ animation: "fadeUp 0.4s 0.6s ease both", opacity: 0 }}
+                >
+                  Done
+                </button>
+              </div>
+            )}
+
+            {/* ── Error screen ── */}
+            {depositStep === "error" && (
+              <div className="px-6 py-8 flex flex-col items-center text-center gap-4">
+                <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-2xl">✕</div>
+                <div>
+                  <h3 className="text-lg font-bold mb-1">Transaction failed</h3>
+                  <p className="text-sm text-white/40">{depositError}</p>
+                </div>
+                <button onClick={() => setDepositStep("form")} className="w-full rounded-2xl border border-white/10 py-3 text-sm text-white/70 hover:bg-white/5 transition-all">Try again</button>
+              </div>
+            )}
+
+            {/* ── Pending / Confirming screens ── */}
+            {(depositStep === "pending" || depositStep === "confirming" || depositStep === "creating") && (
+              <div className="px-6 py-12 flex flex-col items-center text-center gap-5">
+                <div className="relative w-16 h-16">
+                  <div className="absolute inset-0 rounded-full border-2 border-emerald-500/20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-emerald-400 animate-spin" />
+                  <div className="absolute inset-3 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-lg">
+                    {depositStep === "creating" ? "🔑" : depositStep === "pending" ? "⏳" : "⛓️"}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold mb-1">
+                    {depositStep === "creating"    && "Creating agent wallet…"}
+                    {depositStep === "pending"     && "Waiting for MetaMask…"}
+                    {depositStep === "confirming"  && "Confirming on Sepolia…"}
+                  </h3>
+                  <p className="text-sm text-white/35">
+                    {depositStep === "creating"   && "Generating your secure agent wallet"}
+                    {depositStep === "pending"    && "Approve the transaction in MetaMask"}
+                    {depositStep === "confirming" && "Your transaction is being mined"}
+                  </p>
+                  {depositTxHash && (
+                    <a href={`https://sepolia.etherscan.io/tx/${depositTxHash}`} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-emerald-400 hover:text-emerald-300 underline mt-2 inline-block">
+                      View on Etherscan ↗
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Form screen ── */}
+            {depositStep === "form" && (
+              <>
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/6">
+                  <div>
+                    <h3 className="text-lg font-bold">Deposit ETH</h3>
+                    <p className="text-xs text-white/35 mt-0.5">Sepolia testnet · funds your agent wallet</p>
+                  </div>
+                  <button onClick={() => setDepositOpen(false)} className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:border-white/25 transition-all text-sm">✕</button>
+                </div>
+
+                <div className="px-6 py-5 space-y-5">
+                  {/* To address */}
+                  {agentWallet && (
+                    <div className="rounded-2xl border border-white/8 bg-white/[0.02] px-4 py-3">
+                      <p className="text-[10px] text-white/30 uppercase tracking-widest mb-1">To · Agent Wallet</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-mono text-xs text-white/60 flex-1 truncate">{agentWallet.address}</p>
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Sepolia</span>
+                      </div>
+                    </div>
+                  )}
+                  {!agentWallet && (
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-300">
+                      A new agent wallet will be created automatically on deposit.
+                    </div>
+                  )}
+
+                  {/* Amount input */}
+                  <div>
+                    <label className="text-xs text-white/40 mb-2 block">Amount</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={depositAmount}
+                        onChange={e => setDepositAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-2xl font-bold text-white placeholder:text-white/15 focus:outline-none focus:border-emerald-500/50 pr-16"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-white/40">ETH</span>
+                    </div>
+                    {/* USD preview */}
+                    {agentWallet?.ethPriceUsd && parseFloat(depositAmount) > 0 && (
+                      <p className="text-xs text-white/30 mt-1.5 pl-1">
+                        ≈ {fmt(parseFloat(depositAmount) * agentWallet.ethPriceUsd)}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Quick-select amounts */}
+                  <div className="flex gap-2">
+                    {["0.01", "0.05", "0.1", "0.5"].map(v => (
+                      <button
+                        key={v}
+                        onClick={() => setDepositAmount(v)}
+                        className={`flex-1 rounded-xl border py-2 text-xs font-semibold transition-all ${
+                          depositAmount === v
+                            ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                            : "border-white/8 text-white/40 hover:border-white/20 hover:text-white/70"
+                        }`}
+                      >
+                        {v} ETH
+                      </button>
+                    ))}
+                  </div>
+
+                  {depositError && (
+                    <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2.5">{depositError}</p>
+                  )}
+
+                  {/* CTA */}
+                  <button
+                    onClick={handleDeposit}
+                    disabled={!depositAmount || parseFloat(depositAmount) <= 0}
+                    className="w-full rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-white py-3.5 text-sm font-semibold transition-all flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Send via MetaMask
+                  </button>
+
+                  <p className="text-[10px] text-white/20 text-center leading-relaxed">
+                    Make sure MetaMask is connected to <strong className="text-white/35">Sepolia testnet</strong>. Get free test ETH at sepoliafaucet.com
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── CSS animations ─────────────────────────────────────────────────── */}
+      <style>{`
+        @keyframes modalIn {
+          from { opacity: 0; transform: scale(0.92) translateY(12px); }
+          to   { opacity: 1; transform: scale(1)    translateY(0); }
+        }
+        @keyframes successPop {
+          from { opacity: 0; transform: scale(0.5); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes drawCheck {
+          from { stroke-dashoffset: 30; }
+          to   { stroke-dashoffset: 0; }
+        }
+      `}</style>
     </div>
   );
 }
