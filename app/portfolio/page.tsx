@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -129,6 +130,7 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: { value
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
+  const router = useRouter();
   const [portfolio,  setPortfolio]  = useState<Portfolio | null>(null);
   const [liveData,   setLiveData]   = useState<Map<string, LiveData>>(new Map());
   const [loading,    setLoading]    = useState(true);
@@ -449,13 +451,14 @@ export default function PortfolioPage() {
               return (
                 <div
                   key={pos.id}
-                  className="grid grid-cols-[2fr_1fr_80px_1fr_1fr_1fr_90px] gap-4 px-6 py-4 border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors items-center"
+                  onClick={() => router.push(`/explore/${slug}`)}
+                  className="grid grid-cols-[2fr_1fr_80px_1fr_1fr_1fr_90px] gap-4 px-6 py-4 border-b border-white/5 last:border-0 hover:bg-white/[0.03] transition-colors items-center cursor-pointer group"
                 >
                   {/* Asset */}
                   <div className="flex items-center gap-3 min-w-0">
                     <AssetLogo symbol={pos.symbol} logo={ld?.logo ?? ""} color={color} />
                     <div className="min-w-0">
-                      <span className="text-sm font-semibold">{pos.name} </span>
+                      <span className="text-sm font-semibold group-hover:text-white transition-colors">{pos.name} </span>
                       <span className="text-xs text-white/30 uppercase">{pos.symbol}</span>
                     </div>
                   </div>
@@ -548,7 +551,8 @@ export default function PortfolioPage() {
               {trades.slice(0, 10).map((t, idx) => (
                 <div
                   key={t.id}
-                  className="grid grid-cols-[2fr_80px_1fr_1fr_1fr] gap-4 px-6 py-4 border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors items-center"
+                  onClick={() => router.push(`/explore/${t.display_symbol.replace("/", "-")}`)}
+                  className="grid grid-cols-[2fr_80px_1fr_1fr_1fr] gap-4 px-6 py-4 border-b border-white/5 last:border-0 hover:bg-white/[0.03] transition-colors items-center cursor-pointer"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <AssetLogo symbol={t.symbol} logo={liveData.get(t.display_symbol)?.logo ?? ""} color={PALETTE[idx % PALETTE.length]} size={32} />

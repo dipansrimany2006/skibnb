@@ -152,13 +152,14 @@ function AssetCard({ asset }: { asset: AssetData }) {
 // ── Top 3 mini row ────────────────────────────────────────────────────────────
 
 function MiniRow({ asset, extra }: { asset: AssetData; extra?: React.ReactNode }) {
-  const pos = asset.change24h >= 0;
+  const pos  = asset.change24h >= 0;
+  const slug = asset.displaySymbol.replace("/", "-");
   return (
-    <div className="flex items-center justify-between py-3">
+    <Link href={`/explore/${slug}`} className="flex items-center justify-between py-3 hover:bg-white/[0.03] rounded-xl px-2 -mx-2 transition-colors group">
       <div className="flex items-center gap-3">
         <AssetLogo symbol={asset.symbol} logo={asset.logo} size={32} />
         <div>
-          <p className="text-sm font-semibold leading-tight">{asset.name}</p>
+          <p className="text-sm font-semibold leading-tight group-hover:text-white transition-colors">{asset.name}</p>
           <p className="text-xs text-white/40 mt-0.5">{asset.symbol}</p>
         </div>
       </div>
@@ -166,7 +167,7 @@ function MiniRow({ asset, extra }: { asset: AssetData; extra?: React.ReactNode }
         <p className="text-sm font-semibold">{fmt(asset.priceUsd)}</p>
         {extra ?? <p className={`text-xs mt-0.5 ${pos ? "text-emerald-400" : "text-rose-400"}`}>{pos ? "▲" : "▼"} {Math.abs(asset.change24h).toFixed(2)}%</p>}
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -346,13 +347,14 @@ export default function ExplorePage() {
                   <span>Asset</span><span className="text-right">Price</span><span className="text-right">24H</span><span className="text-right">Vol / Type</span>
                 </div>
                 {shown.map((a, i) => {
-                  const pos = a.change24h >= 0;
+                  const pos  = a.change24h >= 0;
+                  const slug = a.displaySymbol.replace("/", "-");
                   return (
-                    <div key={a.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-4 items-center ${i % 2 === 0 ? "bg-white/[0.01]" : ""} hover:bg-white/[0.04] transition-colors cursor-pointer`}>
+                    <Link key={a.id} href={`/explore/${slug}`} className={`grid grid-cols-[2fr_1fr_1fr_1fr] gap-4 px-6 py-4 items-center ${i % 2 === 0 ? "bg-white/[0.01]" : ""} hover:bg-white/[0.04] transition-colors cursor-pointer group`}>
                       <div className="flex items-center gap-3">
                         <AssetLogo symbol={a.symbol} logo={a.logo} size={32} />
                         <div>
-                          <p className="text-sm font-semibold">{a.name}</p>
+                          <p className="text-sm font-semibold group-hover:text-white transition-colors">{a.name}</p>
                           <p className="text-xs text-white/40 mt-0.5">{a.displaySymbol}</p>
                         </div>
                       </div>
@@ -363,7 +365,7 @@ export default function ExplorePage() {
                           ? <span className="inline-block rounded px-2 py-0.5 text-xs bg-indigo-500/10 text-indigo-400">{a.country ?? "US"}</span>
                           : a.volume24h > 0 ? fmt(a.volume24h, { compact: true }) : "—"}
                       </p>
-                    </div>
+                    </Link>
                   );
                 })}
                 {hasMore && <div ref={sentinelRef} className="h-px" />}
