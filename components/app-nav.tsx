@@ -102,7 +102,7 @@ export function AppNav({ active }: { active?: "Explore" | "Portfolio" | "Strateg
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl mx-10">
+    <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl px-10">
       <div className="mx-auto flex h-16 max-w-screen-2xl items-center justify-between gap-6 px-0">
         {/* Logo + nav */}
         <div className="flex items-center gap-8 shrink-0">
