@@ -73,9 +73,9 @@ function checkEntry(
     }
   }
 
-  // Primary gate: blended signal must be meaningfully bullish (not just barely positive).
-  // Stricter threshold when regime doesn't match.
-  const blendedMin = regimePenalty ? 0.35 : 0.05;
+  // Primary gate: blended signal must be directionally bullish.
+  // Apply a higher threshold when regime doesn't match.
+  const blendedMin = regimePenalty ? 0.45 : 0;
   if (blended <= blendedMin) return false;
 
   // Partition conditions: explicit blended_signal conditions vs others
@@ -91,7 +91,7 @@ function checkEntry(
   }
 
   // For all other conditions: score the ones that are available, skip nulls.
-  // Require >= 60% of available conditions to be satisfied.
+  // Enter if >= 50% of available conditions are satisfied (or there are none).
   let met = 0;
   let available = 0;
   for (const cond of otherConds) {
@@ -101,7 +101,7 @@ function checkEntry(
     if (evalCondition(cond, value)) met++;
   }
 
-  return available === 0 || met >= Math.ceil(available * 0.6);
+  return available === 0 || met >= Math.ceil(available * 0.5);
 }
 
 function checkExit(
@@ -230,13 +230,13 @@ export async function runBacktest(opts: {
   let capital = initialCapital;
   let totalBars = 0;
 
-  // Fetch all symbols in parallel to cut wall-clock time
+  // Fetch all symbols in parallel
   const candleMap = await Promise.all(
     symbols.map(s => fetchHistoricalCandles(s, interval, fromMs, toMs).then(c => ({ symbol: s, candles: c })))
   );
 
   for (const { symbol, candles } of candleMap) {
-    if (candles.length < WINDOW + 5) continue;
+    if (candles.length < WINDOW + 10) continue;
 
     totalBars += candles.length;
 
@@ -266,18 +266,14 @@ export async function runBacktest(opts: {
       const allSignals: Signal[] = [...momentumSignals, ...mrSignals, fgSentiment];
       const { blendedSignal, regime } = arbitrate(allSignals, adxValue, isTrending);
 
-      // Position size: consistent formula used for both equity tracking and P&L
-      const posSize = capital * Math.min(spec.positionSizing.maxPositionPct, 0.4);
-
       // Track equity at each bar
       if (positionOpen && entryBar) {
         const unrealised = (current.close - entryBar.close) / entryBar.close;
+        const posSize = capital * spec.positionSizing.riskPerTradePct / 0.02; // rough position size
         equityCurve.push({ time: current.time, value: capital + unrealised * posSize });
       } else {
         equityCurve.push({ time: current.time, value: capital });
       }
-
-      const isLastBar = i === candles.length - 1;
 
       if (!positionOpen) {
         const shouldEnter = checkEntry(spec, allSignals, blendedSignal, fearGreedValue, regime);
@@ -292,10 +288,12 @@ export async function runBacktest(opts: {
           spec, entryBar.close, current.close, barsHeld, allSignals, blendedSignal,
         );
 
-        // Force-close on last bar so all open positions are booked
-        if (exit || isLastBar) {
+        if (exit) {
           const returnPct = (current.close - entryBar.close) / entryBar.close;
-          capital += returnPct * posSize;
+          const maxPos = capital * Math.min(spec.positionSizing.maxPositionPct, 0.5);
+          const sizeUsd = maxPos * spec.positionSizing.riskPerTradePct / 0.01;
+
+          capital += returnPct * Math.min(sizeUsd, maxPos);
 
           trades.push({
             symbol,
@@ -305,8 +303,8 @@ export async function runBacktest(opts: {
             exitPrice:  current.close,
             direction:  "long",
             returnPct,
-            sizeUsd:    posSize,
-            exitReason: isLastBar && !exit ? "period_end" : reason,
+            sizeUsd:    Math.min(sizeUsd, maxPos),
+            exitReason: reason,
           });
 
           positionOpen = false;
