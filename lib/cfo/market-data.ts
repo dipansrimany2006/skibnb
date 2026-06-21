@@ -6,7 +6,14 @@
 import type { Candle } from "./types";
 
 const BENCHMARK   = "https://benchmarks.pyth.network/v1/shims/tradingview/history";
-const BINANCE_API = "https://api.binance.com/api/v3/klines";
+const BINANCE_HOSTS = [
+  "https://api.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://api4.binance.com",
+];
+const BINANCE_API = `${BINANCE_HOSTS[0]}/api/v3/klines`;
 
 // Derive a Binance USDT spot pair from a Pyth display symbol ("BTC/USD") or plain symbol ("BTC")
 function toBinancePair(symbol: string): string {
@@ -77,7 +84,8 @@ export async function fetchCandles(pythSymbol: string, resolution = "5", lookbac
 }
 
 // Historical paginated candles — for backtesting
-// Fetches up to `limit` bars per request, paginates to cover the full range
+// Fetches up to `limit` bars per request, paginates to cover the full range.
+// Tries multiple Binance API hosts in order — some regions block the primary host.
 export async function fetchHistoricalCandles(
   symbol: string,        // e.g. "BTC/USD" or "ETH/USD"
   interval: "1h" | "4h" | "1d",
@@ -85,38 +93,52 @@ export async function fetchHistoricalCandles(
   toMs: number,
 ): Promise<Candle[]> {
   const pair = toBinancePair(symbol);
-  const all: Candle[] = [];
-  let startTime = fromMs;
 
-  while (startTime < toMs) {
-    const url = `${BINANCE_API}?symbol=${pair}&interval=${interval}&startTime=${startTime}&endTime=${toMs}&limit=1000`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) break;
-      const data = await res.json() as [number, string, string, string, string, string, ...unknown[]][];
-      if (!data.length) break;
+  for (const host of BINANCE_HOSTS) {
+    const all: Candle[] = [];
+    let startTime = fromMs;
+    let failed = false;
 
-      const batch: Candle[] = data.map(k => ({
-        time:   Math.floor(k[0] / 1000),
-        open:   parseFloat(k[1]),
-        high:   parseFloat(k[2]),
-        low:    parseFloat(k[3]),
-        close:  parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-      }));
+    while (startTime < toMs) {
+      const url = `${host}/api/v3/klines?symbol=${pair}&interval=${interval}&startTime=${startTime}&endTime=${toMs}&limit=1000`;
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) {
+          console.warn(`[market-data] ${host} returned ${res.status} for ${pair}`, await res.text().catch(() => ""));
+          failed = true;
+          break;
+        }
+        const data = await res.json() as [number, string, string, string, string, string, ...unknown[]][];
+        if (!data.length) break;
 
-      all.push(...batch);
+        const batch: Candle[] = data.map(k => ({
+          time:   Math.floor(k[0] / 1000),
+          open:   parseFloat(k[1]),
+          high:   parseFloat(k[2]),
+          low:    parseFloat(k[3]),
+          close:  parseFloat(k[4]),
+          volume: parseFloat(k[5]),
+        }));
 
-      // Advance startTime past the last candle to avoid duplicates
-      const lastMs = data[data.length - 1][0] as number;
-      if (lastMs <= startTime) break; // safety — no progress
-      startTime = lastMs + 1;
+        all.push(...batch);
 
-      if (data.length < 1000) break; // reached the end
-    } catch {
-      break;
+        const lastMs = data[data.length - 1][0] as number;
+        if (lastMs <= startTime) break;
+        startTime = lastMs + 1;
+
+        if (data.length < 1000) break;
+      } catch (err) {
+        console.warn(`[market-data] ${host} fetch error for ${pair}:`, err);
+        failed = true;
+        break;
+      }
     }
+
+    if (!failed && all.length > 0) return all;
+    if (failed) continue; // try next host
+    return all; // completed without error (possibly 0 bars for empty range)
   }
 
-  return all;
+  console.error(`[market-data] All Binance hosts failed for ${pair} ${interval}`);
+  return [];
 }

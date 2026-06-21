@@ -1,0 +1,122 @@
+SKI — Your Personal On-Chain CFO
+=================================
+
+OVERVIEW
+--------
+SKI is a web app that acts as an AI-powered Chief Financial Officer for crypto investors
+on BNB Chain. Users connect their wallet, set a risk profile, and SKI autonomously
+analyzes markets, generates strategy signals, and executes or simulates trades on their
+behalf. No finance degree required.
+
+Live site: https://ski-trade.vercel.app
+
+
+VISION (250 characters)
+-----------------------
+Your personal on-chain CFO. Ski reads your BNB Chain wallet, runs DCA, RSI & rebalancing
+strategies, and delivers plain-language financial guidance — no finance degree needed.
+Smart money advice for everyone.
+
+
+CORE FEATURES
+-------------
+
+1. AI CFO Engine
+   - Runs an autonomous decision loop per user
+   - Selects its own watchlist dynamically based on market data and risk profile
+   - Executes real BNB trades or falls back to paper trading automatically
+   - Has a built-in circuit breaker — halts and deactivates itself if risk
+     thresholds are breached to protect user funds
+
+2. Trading Strategies
+   - Momentum: blends RSI, MACD, dual-momentum, and CMC Fear & Greed into
+     entry/exit rules. Best in trending markets.
+   - Sentiment Divergence: fires when CMC Fear & Greed disagrees with technical
+     momentum. High-conviction entries only.
+   - Regime Detection: switches between momentum and mean-reversion based on
+     Binance Futures perps positioning (funding rate + long/short ratio).
+   - Perps Divergence: exploits divergence between spot price momentum and perps
+     market positioning. Detects squeeze setups.
+
+3. Strategy Skills (AI-Generated)
+   - Users can generate custom strategy specs via AI (Groq / Llama 3.3 70B)
+   - Strategies are backtested against up to 1 year of historical data
+     (1h, 4h, or 1d candles)
+   - Backtest returns equity curve, trade log, and performance metrics
+
+4. Paper Trading
+   - Full simulated trading with a virtual balance
+   - Tracks positions, average buy price, and P&L per asset
+   - Seamlessly switches to live mode when wallet is funded (minimum 0.01 BNB)
+
+5. BNB AI Agent SDK Integration
+   - Exposes 4 agent tools: market sentiment, BSC token prices, wallet info,
+     and trading signals
+   - Compatible with the BNB Chain AI Agent SDK spec
+   - Each user gets an isolated agent wallet with AES-256-GCM encrypted
+     private key stored server-side
+
+6. Market Intelligence
+   - CoinMarketCap Fear & Greed index and global market cap metrics
+   - Live BSC token prices: BNB, CAKE, ETH, BTC
+   - Pyth Network candle data for strategy signal generation
+   - Binance Futures perps data (funding rate, long/short ratio)
+   - Asset explorer with price charts per token
+
+7. CFO Chat
+   - Conversational AI that knows your real wallet positions
+   - Answers questions like "should I take profit on BNB?" with sized,
+     reasoned answers
+   - Powered by Groq (Llama 3.3 70B) with full portfolio context injected
+
+8. Portfolio Monitoring
+   - Live wallet balance reading from BSC
+   - Allocation breakdown, concentration risk analysis
+   - Full decision history log with reasoning for every CFO action
+
+
+TECH STACK
+----------
+Frontend        : Next.js App Router, TypeScript, Tailwind CSS v4, Recharts
+AI / LLM        : Groq API (Llama 3.3 70B)
+Blockchain      : BNB Smart Chain (BSC), PancakeSwap V2 DEX
+Market Data     : CoinMarketCap API, Pyth Network, Binance Futures
+Authentication  : Google OAuth 2.0 + JWT sessions
+Database        : Neon PostgreSQL
+Wallet          : Privy + per-user AES-256-GCM encrypted agent wallets
+Hosting         : Vercel
+
+
+USER FLOW
+---------
+1. Sign in with Google
+2. Onboarding — set risk tolerance (conservative / balanced / aggressive)
+3. Explore assets or let the CFO dynamically pick its own watchlist
+4. Paper trade with virtual funds or fund the agent wallet for live BSC execution
+5. CFO runs autonomous decision loops and logs every trade with full reasoning
+6. Chat with the CFO anytime for explained, sized financial advice
+
+
+INFRASTRUCTURE
+--------------
+Layer-1         : BNB Smart Chain (BSC)
+Other Ecosystems: CoinMarketCap AI Agent Hub, Pyth Network oracle
+
+
+CATEGORY
+--------
+AI Agent, DeFi, Portfolio Management, Personal Finance, Trading
+
+
+IS THIS AN AI AGENT?
+--------------------
+Yes. SKI wraps a full CFO reasoning engine as a BNB Chain AI agent with tool
+definitions compatible with the BNB Agent SDK. The agent autonomously fetches
+market data, computes multi-strategy signals, and executes trades — all on behalf
+of the user.
+
+
+LINKS
+-----
+GitHub   : https://github.com/dipansrimany2006/ski-bnb   (update with actual repo)
+Website  : https://ski-trade.vercel.app
