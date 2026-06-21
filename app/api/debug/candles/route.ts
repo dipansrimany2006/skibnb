@@ -30,7 +30,7 @@ export async function GET() {
   const pythUrl = `${BENCHMARK}?symbol=BTC%2FUSD&resolution=60&from=${now - 5 * 3600}&to=${now}`;
   try {
     const res = await fetch(pythUrl, { signal: AbortSignal.timeout(8_000) });
-    const json = await res.json();
+    const json = await res.json() as { s?: string; t?: unknown[] };
     results["pyth"] = { status: res.status, s: json.s, bars: json.t?.length ?? 0 };
   } catch (err) {
     results["pyth"] = { error: String(err) };
