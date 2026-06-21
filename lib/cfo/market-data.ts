@@ -1,7 +1,7 @@
 // OHLCV candle fetching
 // Spot candles: Binance public API (no key) — supports any USDT pair
 // Fallback:     Pyth Benchmark TradingView shim
-// Historical:   Binance paginated klines (for backtesting)
+// Historical:   Binance → Pyth (Crypto.X/USD format) → Kraken
 
 import type { Candle } from "./types";
 
@@ -14,12 +14,27 @@ const BINANCE_HOSTS = [
   "https://api4.binance.com",
 ];
 const BINANCE_API = `${BINANCE_HOSTS[0]}/api/v3/klines`;
+const KRAKEN_API  = "https://api.kraken.com/0/public/OHLC";
 
 // Derive a Binance USDT spot pair from a Pyth display symbol ("BTC/USD") or plain symbol ("BTC")
 function toBinancePair(symbol: string): string {
   const base = symbol.replace(/\/USD[T]?$/, "").toUpperCase();
   return `${base}USDT`;
 }
+
+// Kraken uses different pair names for some assets
+const KRAKEN_PAIR_MAP: Record<string, string> = {
+  BTC: "XBTUSD", ETH: "ETHUSD", SOL: "SOLUSD", XRP: "XRPUSD",
+  DOGE: "DOGEUSD", ADA: "ADAUSD", DOT: "DOTUSD", LINK: "LINKUSD",
+  AVAX: "AVAXUSD", MATIC: "MATICUSD", UNI: "UNIUSD", AAVE: "AAVEUSD",
+};
+function toKrakenPair(symbol: string): string {
+  const base = symbol.replace(/\/USD[T]?$/, "").toUpperCase();
+  return KRAKEN_PAIR_MAP[base] ?? `${base}USD`;
+}
+
+// Kraken interval in minutes
+const KRAKEN_INTERVAL: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440 };
 
 async function fetchBinanceCandles(pair: string, limit = 200, interval = "5m"): Promise<Candle[]> {
   const url = `${BINANCE_API}?symbol=${pair}&interval=${interval}&limit=${limit}`;
@@ -85,7 +100,7 @@ export async function fetchCandles(pythSymbol: string, resolution = "5", lookbac
 
 const PYTH_RESOLUTION: Record<string, string> = { "1h": "60", "4h": "240", "1d": "D" };
 
-// Pyth historical fallback for backtesting — works when Binance is geo-blocked (e.g. Vercel US regions)
+// Pyth Benchmark historical — requires "Crypto.BTC/USD" symbol format
 async function fetchPythHistoricalCandles(
   symbol: string,
   interval: "1h" | "4h" | "1d",
@@ -95,17 +110,23 @@ async function fetchPythHistoricalCandles(
   const resolution = PYTH_RESOLUTION[interval] ?? "60";
   const from = Math.floor(fromMs / 1000);
   const to   = Math.floor(toMs   / 1000);
-  const url  = `${BENCHMARK}?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}`;
+  // Pyth TradingView shim needs "Crypto.BTC/USD" format
+  const base = symbol.replace(/\/USD[T]?$/, "").toUpperCase();
+  const pythSym = `Crypto.${base}/USD`;
+  const url = `${BENCHMARK}?symbol=${encodeURIComponent(pythSym)}&resolution=${resolution}&from=${from}&to=${to}`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
-      console.warn(`[market-data] Pyth returned ${res.status} for ${symbol}`);
+      console.warn(`[market-data] Pyth ${res.status} for ${pythSym}`);
       return [];
     }
     const data = await res.json() as {
       s: string; t?: number[]; o?: number[]; h?: number[]; l?: number[]; c?: number[]; v?: number[];
     };
-    if (data.s !== "ok" || !data.t || !data.c) return [];
+    if (data.s !== "ok" || !data.t || !data.c) {
+      console.warn(`[market-data] Pyth s=${data.s} for ${pythSym}`);
+      return [];
+    }
     return data.t.map((t, i) => ({
       time:   t,
       open:   data.o?.[i] ?? data.c![i],
@@ -115,13 +136,74 @@ async function fetchPythHistoricalCandles(
       volume: data.v?.[i] ?? 0,
     }));
   } catch (err) {
-    console.warn(`[market-data] Pyth historical fetch error for ${symbol}:`, err);
+    console.warn(`[market-data] Pyth historical error for ${pythSym}:`, err);
     return [];
   }
 }
 
+// Kraken historical OHLCV — US-accessible, no auth required
+// Returns up to 720 bars per request; paginates via `since`
+async function fetchKrakenHistoricalCandles(
+  symbol: string,
+  interval: "1h" | "4h" | "1d",
+  fromMs: number,
+  toMs: number,
+): Promise<Candle[]> {
+  const pair = toKrakenPair(symbol);
+  const intervalMin = KRAKEN_INTERVAL[interval] ?? 60;
+  const all: Candle[] = [];
+  let since = Math.floor(fromMs / 1000);
+
+  while (true) {
+    const url = `${KRAKEN_API}?pair=${pair}&interval=${intervalMin}&since=${since}`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) {
+        console.warn(`[market-data] Kraken ${res.status} for ${pair}`);
+        break;
+      }
+      const json = await res.json() as {
+        error: string[];
+        result?: Record<string, [number, string, string, string, string, string, number, number][]> & { last?: number };
+      };
+      if (json.error?.length) {
+        console.warn(`[market-data] Kraken error for ${pair}:`, json.error);
+        break;
+      }
+      if (!json.result) break;
+
+      const resultKey = Object.keys(json.result).find(k => k !== "last");
+      if (!resultKey) break;
+      const rows = json.result[resultKey];
+      if (!rows || rows.length === 0) break;
+
+      for (const row of rows) {
+        const t = row[0];
+        if (t > Math.floor(toMs / 1000)) break;
+        all.push({
+          time:   t,
+          open:   parseFloat(row[1]),
+          high:   parseFloat(row[2]),
+          low:    parseFloat(row[3]),
+          close:  parseFloat(row[4]),
+          volume: parseFloat(row[6].toString()),
+        });
+      }
+
+      const last = json.result.last as number | undefined;
+      if (!last || rows.length < 720) break;
+      since = last;
+    } catch (err) {
+      console.warn(`[market-data] Kraken fetch error for ${pair}:`, err);
+      break;
+    }
+  }
+
+  return all.filter(c => c.time <= Math.floor(toMs / 1000));
+}
+
 // Historical paginated candles — for backtesting.
-// Primary: Binance (tries multiple hosts). Fallback: Pyth Benchmark (works from all regions).
+// Priority: Binance → Pyth (Crypto.X/USD) → Kraken
 export async function fetchHistoricalCandles(
   symbol: string,        // e.g. "BTC/USD" or "ETH/USD"
   interval: "1h" | "4h" | "1d",
@@ -140,7 +222,6 @@ export async function fetchHistoricalCandles(
       try {
         const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
         if (!res.ok) {
-          console.warn(`[market-data] ${host} returned ${res.status} for ${pair}`);
           failed = true;
           break;
         }
@@ -163,8 +244,7 @@ export async function fetchHistoricalCandles(
         startTime = lastMs + 1;
 
         if (data.length < 1000) break;
-      } catch (err) {
-        console.warn(`[market-data] ${host} fetch error for ${pair}:`, err);
+      } catch {
         failed = true;
         break;
       }
@@ -175,7 +255,12 @@ export async function fetchHistoricalCandles(
     return all;
   }
 
-  // All Binance hosts failed — fall back to Pyth Benchmark (geo-unrestricted)
-  console.warn(`[market-data] All Binance hosts failed for ${pair}, falling back to Pyth`);
-  return fetchPythHistoricalCandles(symbol, interval, fromMs, toMs);
+  // Pyth fallback (Crypto.BTC/USD format)
+  console.warn(`[market-data] Binance blocked, trying Pyth for ${symbol}`);
+  const pythCandles = await fetchPythHistoricalCandles(symbol, interval, fromMs, toMs);
+  if (pythCandles.length >= 50) return pythCandles;
+
+  // Kraken fallback — US-accessible exchange
+  console.warn(`[market-data] Pyth insufficient (${pythCandles.length} bars), trying Kraken for ${symbol}`);
+  return fetchKrakenHistoricalCandles(symbol, interval, fromMs, toMs);
 }
