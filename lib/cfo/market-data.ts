@@ -83,9 +83,45 @@ export async function fetchCandles(pythSymbol: string, resolution = "5", lookbac
   return fetchPythCandles(pythSymbol, resolution, lookbackSeconds);
 }
 
-// Historical paginated candles — for backtesting
-// Fetches up to `limit` bars per request, paginates to cover the full range.
-// Tries multiple Binance API hosts in order — some regions block the primary host.
+const PYTH_RESOLUTION: Record<string, string> = { "1h": "60", "4h": "240", "1d": "D" };
+
+// Pyth historical fallback for backtesting — works when Binance is geo-blocked (e.g. Vercel US regions)
+async function fetchPythHistoricalCandles(
+  symbol: string,
+  interval: "1h" | "4h" | "1d",
+  fromMs: number,
+  toMs: number,
+): Promise<Candle[]> {
+  const resolution = PYTH_RESOLUTION[interval] ?? "60";
+  const from = Math.floor(fromMs / 1000);
+  const to   = Math.floor(toMs   / 1000);
+  const url  = `${BENCHMARK}?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      console.warn(`[market-data] Pyth returned ${res.status} for ${symbol}`);
+      return [];
+    }
+    const data = await res.json() as {
+      s: string; t?: number[]; o?: number[]; h?: number[]; l?: number[]; c?: number[]; v?: number[];
+    };
+    if (data.s !== "ok" || !data.t || !data.c) return [];
+    return data.t.map((t, i) => ({
+      time:   t,
+      open:   data.o?.[i] ?? data.c![i],
+      high:   data.h?.[i] ?? data.c![i],
+      low:    data.l?.[i] ?? data.c![i],
+      close:  data.c![i],
+      volume: data.v?.[i] ?? 0,
+    }));
+  } catch (err) {
+    console.warn(`[market-data] Pyth historical fetch error for ${symbol}:`, err);
+    return [];
+  }
+}
+
+// Historical paginated candles — for backtesting.
+// Primary: Binance (tries multiple hosts). Fallback: Pyth Benchmark (works from all regions).
 export async function fetchHistoricalCandles(
   symbol: string,        // e.g. "BTC/USD" or "ETH/USD"
   interval: "1h" | "4h" | "1d",
@@ -102,9 +138,9 @@ export async function fetchHistoricalCandles(
     while (startTime < toMs) {
       const url = `${host}/api/v3/klines?symbol=${pair}&interval=${interval}&startTime=${startTime}&endTime=${toMs}&limit=1000`;
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
         if (!res.ok) {
-          console.warn(`[market-data] ${host} returned ${res.status} for ${pair}`, await res.text().catch(() => ""));
+          console.warn(`[market-data] ${host} returned ${res.status} for ${pair}`);
           failed = true;
           break;
         }
@@ -135,10 +171,11 @@ export async function fetchHistoricalCandles(
     }
 
     if (!failed && all.length > 0) return all;
-    if (failed) continue; // try next host
-    return all; // completed without error (possibly 0 bars for empty range)
+    if (failed) continue;
+    return all;
   }
 
-  console.error(`[market-data] All Binance hosts failed for ${pair} ${interval}`);
-  return [];
+  // All Binance hosts failed — fall back to Pyth Benchmark (geo-unrestricted)
+  console.warn(`[market-data] All Binance hosts failed for ${pair}, falling back to Pyth`);
+  return fetchPythHistoricalCandles(symbol, interval, fromMs, toMs);
 }

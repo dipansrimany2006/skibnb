@@ -8,6 +8,7 @@ import type { StrategySpec } from "@/lib/skill/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 export const maxDuration = 60; // seconds — allow time for multi-symbol paginated Binance fetches
 
 const VALID_INTERVALS = ["1h", "4h", "1d"] as const;
