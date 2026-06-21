@@ -181,17 +181,27 @@ function computeMetrics(
 
   const grossProfit = wins.reduce((a, t) => a + t.returnPct * t.sizeUsd, 0);
   const grossLoss   = Math.abs(losses.reduce((a, t) => a + t.returnPct * t.sizeUsd, 0));
-  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+  // Cap at 99 — Infinity serializes as null in JSON, breaking client-side toFixed calls
+  const profitFactor = grossLoss > 0 ? Math.min(grossProfit / grossLoss, 99) : grossProfit > 0 ? 99 : 0;
 
   const avgTradeReturn = trades.length > 0
     ? trades.reduce((a, t) => a + t.returnPct, 0) / trades.length
     : 0;
 
+  // Sanitize: JSON.stringify converts Infinity/NaN to null, breaking client toFixed calls
+  const fin = (v: number) => (isFinite(v) ? v : 0);
+
   return {
-    finalCapital, totalReturnPct, annualizedReturnPct,
-    sharpeRatio, sortinoRatio, calmarRatio,
-    maxDrawdownPct: maxDrawdown,
-    winRate, avgTradeReturn, profitFactor,
+    finalCapital:        fin(finalCapital),
+    totalReturnPct:      fin(totalReturnPct),
+    annualizedReturnPct: fin(annualizedReturnPct),
+    sharpeRatio:         fin(sharpeRatio),
+    sortinoRatio:        fin(sortinoRatio),
+    calmarRatio:         fin(calmarRatio),
+    maxDrawdownPct:      fin(maxDrawdown),
+    winRate:             fin(winRate),
+    avgTradeReturn:      fin(avgTradeReturn),
+    profitFactor:        fin(profitFactor),
   };
 }
 
