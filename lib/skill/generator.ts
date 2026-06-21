@@ -133,12 +133,12 @@ ${customMandate ? `Custom mandate: ${customMandate}` : ""}
 === SIGNAL VALUE RANGES — CRITICAL ===
 All signal values are normalised to [-1, +1]. Use these calibrated thresholds:
 
-  blended_signal  : composite score in [-1, +1]. Bullish threshold: > 0.15 (moderate) or > 0.35 (strong)
-  rsi_signal      : RSI mapped to [-1,+1]. Oversold (RSI<30) → ~+0.8. Neutral → 0. Overbought (RSI>70) → ~-0.8.
-                    To catch oversold entries use: "rsi_signal > 0.5"
-                    To confirm uptrend momentum use: "rsi_signal > 0.0"
-  macd_signal     : MACD histogram normalised. Bullish crossover → +0.5 to +1. Bearish → -0.5 to -1.
-                    Bullish confirmation: "macd_signal > 0.1"
+  blended_signal  : composite score in [-1, +1]. Bullish threshold: > 0.05 (moderate) or > 0.12 (strong)
+  rsi_signal      : RSI mapped to [-1,+1]. Only non-zero in extremes: Oversold (RSI<30) → +0.3 to +1.0. Overbought (RSI>70) → -0.3 to -1.0. RSI 30-70 → 0.
+                    To catch oversold bounce use: "rsi_signal > 0.3"
+                    Do NOT use rsi_signal > 0.0 as a condition — it only fires at RSI<30 (extreme oversold).
+  macd_signal     : MACD histogram normalised. Bullish crossover → +0.3 to +1. Bearish → -0.3 to -1. Near zero → 0.
+                    Bullish confirmation: "macd_signal > 0.05"
   stochastic_signal: Stochastic %K/%D mapped to [-1,+1]. Oversold → +0.7. Overbought → -0.7.
   bollinger_reversion: Price vs Bollinger Bands in [-1,+1]. Below lower band → +0.8. Above upper → -0.8.
   ma_crossover    : 50/200 MA crossover in [-1,+1]. Golden cross → +1. Death cross → -1.

@@ -7,7 +7,6 @@ import type { Candle } from "@/lib/cfo/types";
 import { fetchHistoricalCandles } from "@/lib/cfo/market-data";
 import { runMomentumStrategies, adxFilter } from "@/lib/cfo/strategies/momentum";
 import { runMeanReversionStrategies } from "@/lib/cfo/strategies/mean-reversion";
-import { runSentimentStrategies } from "@/lib/cfo/strategies/sentiment";
 import { arbitrate } from "@/lib/cfo/arbitration";
 import type { Signal } from "@/lib/cfo/types";
 
@@ -64,9 +63,6 @@ function checkEntry(
   fearGreed: number,
   regime: "trending" | "ranging" | "unknown",
 ): boolean {
-  // Regime filter
-  if (spec.regimeFilter && !spec.regimeFilter.allowedRegimes.includes(regime)) return false;
-
   // Regime filter — soft in backtesting:
   // "unknown" is always allowed (insufficient data to classify).
   // Mismatched regime raises the bar (requires stronger blended signal) but does not hard-block.
@@ -241,7 +237,19 @@ export async function runBacktest(opts: {
       const { adxValue, isTrending } = adxFilter(window);
       const momentumSignals = runMomentumStrategies(window).filter(s => s.name !== "adx_filter");
       const mrSignals = runMeanReversionStrategies(window);
-      const allSignals: Signal[] = [...momentumSignals, ...mrSignals];
+      // Synthetic sentiment signal from spec snapshot — no historical F&G series available
+      const fg = fearGreedValue;
+      const fgSentiment: Signal = {
+        name: "fear_greed_contrarian",
+        family: "sentiment",
+        value: fg <= 25 ? 0.7 + ((25 - fg) / 25) * 0.3
+             : fg <= 40 ? ((40 - fg) / 15) * 0.5
+             : fg <= 60 ? 0
+             : fg <= 75 ? -((fg - 60) / 15) * 0.5
+             : -(0.7 + ((fg - 75) / 25) * 0.3),
+        detail: `F&G snapshot=${fg}`,
+      };
+      const allSignals: Signal[] = [...momentumSignals, ...mrSignals, fgSentiment];
       const { blendedSignal, regime } = arbitrate(allSignals, adxValue, isTrending);
 
       // Track equity at each bar

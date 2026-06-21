@@ -83,7 +83,7 @@ function UserMenu({ user }: { user: UserProfile }) {
 const NAV_ITEMS = [
   { label: "Explore",   href: "/explore" },
   { label: "Portfolio", href: "/portfolio" },
-  // { label: "Strategy",  href: "/strategy" },
+  { label: "Strategy",  href: "/strategy" },
   { label: "CFO",       href: "/cfo" },
 ];
 
