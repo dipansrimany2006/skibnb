@@ -204,6 +204,7 @@ async function fetchKrakenHistoricalCandles(
 
 // Historical paginated candles — for backtesting.
 // Priority: Binance → Pyth (Crypto.X/USD) → Kraken
+// On 451 (geo-block), skips remaining Binance hosts immediately to avoid wasted timeouts.
 export async function fetchHistoricalCandles(
   symbol: string,        // e.g. "BTC/USD" or "ETH/USD"
   interval: "1h" | "4h" | "1d",
@@ -211,8 +212,11 @@ export async function fetchHistoricalCandles(
   toMs: number,
 ): Promise<Candle[]> {
   const pair = toBinancePair(symbol);
+  let geoBlocked = false;
 
   for (const host of BINANCE_HOSTS) {
+    if (geoBlocked) break; // 451 from any host means all are blocked — skip early
+
     const all: Candle[] = [];
     let startTime = fromMs;
     let failed = false;
@@ -220,8 +224,9 @@ export async function fetchHistoricalCandles(
     while (startTime < toMs) {
       const url = `${host}/api/v3/klines?symbol=${pair}&interval=${interval}&startTime=${startTime}&endTime=${toMs}&limit=1000`;
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
         if (!res.ok) {
+          if (res.status === 451) geoBlocked = true; // all hosts share this restriction
           failed = true;
           break;
         }
@@ -255,12 +260,10 @@ export async function fetchHistoricalCandles(
     return all;
   }
 
-  // Pyth fallback (Crypto.BTC/USD format)
-  console.warn(`[market-data] Binance blocked, trying Pyth for ${symbol}`);
+  // Pyth fallback (Crypto.X/USD format)
   const pythCandles = await fetchPythHistoricalCandles(symbol, interval, fromMs, toMs);
   if (pythCandles.length >= 50) return pythCandles;
 
   // Kraken fallback — US-accessible exchange
-  console.warn(`[market-data] Pyth insufficient (${pythCandles.length} bars), trying Kraken for ${symbol}`);
   return fetchKrakenHistoricalCandles(symbol, interval, fromMs, toMs);
 }

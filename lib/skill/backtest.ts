@@ -220,8 +220,12 @@ export async function runBacktest(opts: {
   let capital = initialCapital;
   let totalBars = 0;
 
-  for (const symbol of symbols) {
-    const candles = await fetchHistoricalCandles(symbol, interval, fromMs, toMs);
+  // Fetch all symbols in parallel to cut wall-clock time
+  const candleMap = await Promise.all(
+    symbols.map(s => fetchHistoricalCandles(s, interval, fromMs, toMs).then(c => ({ symbol: s, candles: c })))
+  );
+
+  for (const { symbol, candles } of candleMap) {
     if (candles.length < WINDOW + 5) continue;
 
     totalBars += candles.length;
