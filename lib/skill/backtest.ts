@@ -75,7 +75,7 @@ function checkEntry(
 
   // Primary gate: blended signal must be meaningfully bullish (not just barely positive).
   // Stricter threshold when regime doesn't match.
-  const blendedMin = regimePenalty ? 0.45 : 0.08;
+  const blendedMin = regimePenalty ? 0.35 : 0.05;
   if (blended <= blendedMin) return false;
 
   // Partition conditions: explicit blended_signal conditions vs others
@@ -91,7 +91,7 @@ function checkEntry(
   }
 
   // For all other conditions: score the ones that are available, skip nulls.
-  // Require >= 75% of available conditions to be satisfied (high-conviction filter).
+  // Require >= 60% of available conditions to be satisfied.
   let met = 0;
   let available = 0;
   for (const cond of otherConds) {
@@ -101,7 +101,7 @@ function checkEntry(
     if (evalCondition(cond, value)) met++;
   }
 
-  return available === 0 || met >= Math.ceil(available * 0.75);
+  return available === 0 || met >= Math.ceil(available * 0.6);
 }
 
 function checkExit(
@@ -222,7 +222,7 @@ export async function runBacktest(opts: {
 
   for (const symbol of symbols) {
     const candles = await fetchHistoricalCandles(symbol, interval, fromMs, toMs);
-    if (candles.length < WINDOW + 10) continue;
+    if (candles.length < WINDOW + 5) continue;
 
     totalBars += candles.length;
 
