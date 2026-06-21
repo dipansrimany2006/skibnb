@@ -271,32 +271,48 @@ export function adxFilter(candles: Candle[], period = 14): { signal: Signal; adx
   };
 }
 
-// ── 9. Supertrend (stub — not real trailing state) ──────────────────────────
+// ── 9. Supertrend — stateful trailing stop computed over full candle series ──
 
 export function supertrend(candles: Candle[], period = 10, multiplier = 3): Signal {
-  if (candles.length < period + 1) return { value: 0, detail: "insufficient data", name: "supertrend", family: "momentum" };
-  const cl = closes(candles);
+  if (candles.length < period + 2) return { value: 0, detail: "insufficient data", name: "supertrend", family: "momentum" };
   const hi = highs(candles);
   const lo = lows(candles);
+  const cl = closes(candles);
 
-  const trArr: number[] = [];
+  // Compute ATR for each bar
+  const tr: number[] = [hi[0] - lo[0]];
   for (let i = 1; i < candles.length; i++) {
-    const hl = hi[i] - lo[i];
-    const hc = Math.abs(hi[i] - cl[i - 1]);
-    const lc = Math.abs(lo[i] - cl[i - 1]);
-    trArr.push(Math.max(hl, hc, lc));
+    tr.push(Math.max(hi[i] - lo[i], Math.abs(hi[i] - cl[i - 1]), Math.abs(lo[i] - cl[i - 1])));
   }
-  if (trArr.length < period) return { value: 0, detail: "insufficient data", name: "supertrend", family: "momentum" };
-  const atr = trArr.slice(-period).reduce((a, b) => a + b, 0) / period;
-  const lastCandle = candles[candles.length - 1];
-  const hl2 = (lastCandle.high + lastCandle.low) / 2;
-  const upperBand = hl2 + multiplier * atr;
-  const lowerBand = hl2 - multiplier * atr;
-  const price = lastCandle.close;
-  const signal = price > lowerBand ? 1 : price < upperBand ? -1 : 0;
+
+  // Smoothed ATR (Wilder's)
+  const atr: number[] = new Array(candles.length).fill(0);
+  atr[period - 1] = tr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < candles.length; i++) {
+    atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
+  }
+
+  // Track direction state across bars
+  let direction = 1; // 1 = bullish, -1 = bearish
+  let upperBand = 0;
+  let lowerBand = 0;
+
+  for (let i = period; i < candles.length; i++) {
+    const hl2 = (hi[i] + lo[i]) / 2;
+    const newUpper = hl2 + multiplier * atr[i];
+    const newLower = hl2 - multiplier * atr[i];
+
+    upperBand = (i === period || newUpper < upperBand || cl[i - 1] > upperBand) ? newUpper : upperBand;
+    lowerBand = (i === period || newLower > lowerBand || cl[i - 1] < lowerBand) ? newLower : lowerBand;
+
+    if (direction === 1 && cl[i] < lowerBand) direction = -1;
+    else if (direction === -1 && cl[i] > upperBand) direction = 1;
+  }
+
+  const price = cl[cl.length - 1];
   return {
-    value: signal,
-    detail: `price=${price.toFixed(4)},upper=${upperBand.toFixed(4)},lower=${lowerBand.toFixed(4)},atr=${atr.toFixed(4)}`,
+    value: direction as -1 | 1,
+    detail: `direction=${direction},price=${price.toFixed(2)},upper=${upperBand.toFixed(2)},lower=${lowerBand.toFixed(2)}`,
     name: "supertrend",
     family: "momentum",
   };
