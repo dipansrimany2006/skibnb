@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type Step = "profile" | "compliance" | "persona" | "done";
+type Step = "profile" | "compliance" | "persona";
 
 const COUNTRIES = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia",
@@ -91,7 +91,7 @@ export default function OnboardingPage() {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to save profile.");
-      setStep("done");
+      router.push("/explore");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed.");
     } finally {
@@ -99,15 +99,14 @@ export default function OnboardingPage() {
     }
   }
 
-  const stepNum = { profile: 1, compliance: 2, persona: 3, done: 4 }[step];
+  const stepNum = { profile: 1, compliance: 2, persona: 3 }[step];
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-5 py-12">
       <div className="w-full max-w-lg">
 
-        {/* Progress — 3 steps shown, step 4 is reveal */}
-        {step !== "done" && (
-          <div className="mb-8 flex items-center gap-2">
+        {/* Progress */}
+        <div className="mb-8 flex items-center gap-2">
             {[1, 2, 3].map((n) => (
               <div key={n} className="flex items-center gap-2">
                 <div
@@ -128,7 +127,6 @@ export default function OnboardingPage() {
               {step === "persona"    && "Your CFO"}
             </span>
           </div>
-        )}
 
         {/* Step 1: Profile */}
         {step === "profile" && (
@@ -381,56 +379,6 @@ export default function OnboardingPage() {
                 className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Launch your CFO"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 4: Done — start building */}
-        {step === "done" && (
-          <div className="space-y-8">
-            <div className="flex flex-col items-center text-center gap-4 py-4">
-              <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center text-3xl">
-                ⚡
-              </div>
-              <div>
-                <h1 className="text-2xl font-semibold">You&apos;re all set, {cfoName || "Ski"}</h1>
-                <p className="mt-2 text-sm text-muted-foreground max-w-xs mx-auto">
-                  Your CFO is configured. Build your first AI-generated trading strategy — powered by CMC market data and Binance Futures.
-                </p>
-              </div>
-            </div>
-
-            {/* CTA cards */}
-            <div className="space-y-3">
-              <button
-                onClick={() => router.push("/strategy")}
-                className="w-full rounded-2xl border border-primary/30 bg-primary/8 px-5 py-4 text-left transition-all hover:bg-primary/12 hover:border-primary/50 group"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-primary">Build a strategy →</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Generate a backtestable strategy spec from live CMC + Binance Futures data
-                    </p>
-                  </div>
-                  <span className="text-2xl opacity-60 group-hover:opacity-100 transition-opacity">📈</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => router.push("/cfo")}
-                className="w-full rounded-2xl border border-border bg-secondary/20 px-5 py-4 text-left transition-all hover:bg-secondary/30 group"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">Go to CFO dashboard</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      See live signals, market sentiment, and your CFO&apos;s decision log
-                    </p>
-                  </div>
-                  <span className="text-2xl opacity-40 group-hover:opacity-80 transition-opacity">🧠</span>
-                </div>
               </button>
             </div>
           </div>
